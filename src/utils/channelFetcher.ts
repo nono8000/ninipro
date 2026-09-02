@@ -71,7 +71,56 @@ export function getPreloadedConfigs(): ConfigItem[] {
 }
 
 // Function to fetch from channel / remote aggregator with fallback
+// ---------------------------------------------------------------------------
+// URL validation: only https, only public hosts. Blocks localhost/private IP
+// ranges and file/data schemes so a malicious "channel" entry can't be used to
+// probe internal services (SSRF-style) or run exotic schemes.
+// ---------------------------------------------------------------------------
+const BLOCKED_URL_HOST_PATTERNS = [
+  /^localhost$/i,
+  /^127\./,
+  /^0\./,
+  /^10\./,
+  /^192\.168\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^169\.254\./,
+  /^\[?::1\]?$/,
+  /^\[?fc00:/i,
+  /^\[?fd/i,
+  /\.local$/i,
+  /\.internal$/i,
+];
+
+export function isValidChannelUrl(url: string): { valid: boolean; reason?: string } {
+  if (!url || !url.trim()) return { valid: false, reason: 'لینک خالی است.' };
+  if (url.length > 2048) return { valid: false, reason: 'لینک بیش از حد طولانی است.' };
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return { valid: false, reason: 'قالب لینک نامعتبر است.' };
+  }
+
+  if (parsed.protocol !== 'https:') {
+    return { valid: false, reason: 'فقط لینک‌های HTTPS پشتیبانی می‌شوند.' };
+  }
+
+  const host = parsed.hostname;
+  if (BLOCKED_URL_HOST_PATTERNS.some((re) => re.test(host))) {
+    return { valid: false, reason: 'آدرس‌های داخلی و لوکال مجاز نیستند.' };
+  }
+
+  return { valid: true };
+}
+
 export async function fetchChannelConfigs(channel: ChannelSource): Promise<{ success: boolean; configs: ConfigItem[]; error?: string }> {
+  const urlCheck = isValidChannelUrl(channel.url);
+  if (!urlCheck.valid) {
+    console.warn(`Channel blocked (${channel.name}): ${urlCheck.reason}`);
+    return { success: false, configs: [], error: urlCheck.reason };
+  }
+
   try {
     // Attempt fetch with timeout
     const controller = new AbortController();

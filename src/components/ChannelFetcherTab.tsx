@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ChannelSource, ConfigItem, ThemeMode } from '../types';
 import { THEMES } from '../utils/theme';
+import { isValidChannelUrl } from '../utils/channelFetcher';
 import {
   Radio,
   RefreshCw,
@@ -44,18 +45,28 @@ export const ChannelFetcherTab: React.FC<ChannelFetcherTabProps> = ({
   const [newChannelName, setNewChannelName] = useState('');
   const [newChannelHandle, setNewChannelHandle] = useState('');
   const [newChannelUrl, setNewChannelUrl] = useState('');
+  const [channelFormError, setChannelFormError] = useState<string | null>(null);
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newChannelName.trim() || !newChannelUrl.trim()) return;
+
+    // Security: validate URL before adding (https-only, no internal hosts)
+    const urlCheck = isValidChannelUrl(newChannelUrl);
+    if (!urlCheck.valid) {
+      setChannelFormError(urlCheck.reason || 'لینک نامعتبر است.');
+      return;
+    }
+
     onAddChannel(
-      newChannelName.trim(),
-      newChannelHandle.trim() || `@${newChannelName.trim().replace(/\s+/g, '_')}`,
+      newChannelName.trim().slice(0, 80),
+      newChannelHandle.trim().slice(0, 60) || `@${newChannelName.trim().replace(/\s+/g, '_')}`,
       newChannelUrl.trim()
     );
     setNewChannelName('');
     setNewChannelHandle('');
     setNewChannelUrl('');
+    setChannelFormError(null);
     setShowAddForm(false);
   };
 
@@ -201,11 +212,19 @@ export const ChannelFetcherTab: React.FC<ChannelFetcherTabProps> = ({
                 type="url"
                 dir="ltr"
                 value={newChannelUrl}
-                onChange={(e) => setNewChannelUrl(e.target.value)}
+                onChange={(e) => {
+                  setNewChannelUrl(e.target.value);
+                  if (channelFormError) setChannelFormError(null);
+                }}
                 placeholder="https://raw.githubusercontent.com/..."
                 required
                 className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-white/40"
               />
+              {channelFormError && (
+                <p className="mt-1.5 text-[11px] text-red-400 bg-red-950/40 p-2 rounded-lg border border-red-800/40">
+                  {channelFormError}
+                </p>
+              )}
             </div>
           </div>
 

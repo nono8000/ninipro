@@ -1,8 +1,43 @@
 import { ConfigItem, ProtocolType } from '../types';
 
+// ---------------------------------------------------------------------------
+// Input sanitization: config names/remarks come from untrusted sources
+// (telegram channels, raw pastes, remote subscription URLs). Strip control
+// characters and cap length so hostile remarks can't break layout or smuggle
+// scripts into any downstream consumer (QR payloads, clipboard, exports).
+// ---------------------------------------------------------------------------
+const MAX_NAME_LENGTH = 120;
+
+export function sanitizeText(input: string, maxLen: number = MAX_NAME_LENGTH): string {
+  if (!input) return '';
+  return input
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F]/g, ' ') // control chars -> space
+    .replace(/[\u200B-\u200D\uFEFF]/g, '') // zero-width chars
+    .replace(/javascript:/gi, '') // neutralize common URL scheme injection
+    .replace(/data:text\/html/gi, '')
+    .trim()
+    .slice(0, maxLen);
+}
+
+export function sanitizeHost(input: string): string {
+  if (!input) return '';
+  return input
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F<>"'`\\]/g, '')
+    .trim()
+    .slice(0, 253); // max hostname length
+}
+
+export function sanitizePort(input: number): number {
+  const p = Math.floor(Number(input));
+  if (!Number.isFinite(p) || p < 1 || p > 65535) return 443;
+  return p;
+}
+
 // Country flag and name detector
 export function detectCountry(text: string, serverHost: string): { country: string; code: string; flag: string } {
-  const combined = (text + ' ' + serverHost).toLowerCase();
+  const combined = (sanitizeText(text, 300) + ' ' + sanitizeHost(serverHost)).toLowerCase();
   
   if (combined.includes('germany') || combined.includes('de') || combined.includes('آلمان') || combined.includes('frankfurt')) {
     return { country: 'آلمان (Germany)', code: 'DE', flag: '🇩🇪' };
@@ -108,11 +143,11 @@ export function parseSingleConfig(raw: string, source: ConfigItem['source'] = 'm
 
       return {
         id: `vless_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
-        name: remark || `ninipro-vless-${countryInfo.code}`,
+        name: sanitizeText(remark) || `ninipro-vless-${countryInfo.code}`,
         raw: line,
         protocol: 'vless',
-        server,
-        port: isNaN(port) ? 443 : port,
+        server: sanitizeHost(server),
+        port: sanitizePort(port),
         ping: null,
         status: 'untested',
         country: countryInfo.country,
@@ -148,11 +183,11 @@ export function parseSingleConfig(raw: string, source: ConfigItem['source'] = 'm
 
       return {
         id: `vmess_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
-        name: remark || `ninipro-vmess-${countryInfo.code}`,
+        name: sanitizeText(remark) || `ninipro-vmess-${countryInfo.code}`,
         raw: line,
         protocol: 'vmess',
-        server,
-        port,
+        server: sanitizeHost(server),
+        port: sanitizePort(port),
         ping: null,
         status: 'untested',
         country: countryInfo.country,
@@ -192,11 +227,11 @@ export function parseSingleConfig(raw: string, source: ConfigItem['source'] = 'm
 
       return {
         id: `trojan_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
-        name: remark || `ninipro-trojan-${countryInfo.code}`,
+        name: sanitizeText(remark) || `ninipro-trojan-${countryInfo.code}`,
         raw: line,
         protocol: 'trojan',
-        server,
-        port: isNaN(port) ? 443 : port,
+        server: sanitizeHost(server),
+        port: sanitizePort(port),
         ping: null,
         status: 'untested',
         country: countryInfo.country,
@@ -240,11 +275,11 @@ export function parseSingleConfig(raw: string, source: ConfigItem['source'] = 'm
 
       return {
         id: `ss_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
-        name: remark || `ninipro-ss-${countryInfo.code}`,
+        name: sanitizeText(remark) || `ninipro-ss-${countryInfo.code}`,
         raw: line,
         protocol: 'ss',
-        server,
-        port,
+        server: sanitizeHost(server),
+        port: sanitizePort(port),
         ping: null,
         status: 'untested',
         country: countryInfo.country,
@@ -280,11 +315,11 @@ export function parseSingleConfig(raw: string, source: ConfigItem['source'] = 'm
 
       return {
         id: `hy2_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
-        name: remark || `ninipro-hy2-${countryInfo.code}`,
+        name: sanitizeText(remark) || `ninipro-hy2-${countryInfo.code}`,
         raw: line,
         protocol: 'hysteria2',
-        server,
-        port: isNaN(port) ? 443 : port,
+        server: sanitizeHost(server),
+        port: sanitizePort(port),
         ping: null,
         status: 'untested',
         country: countryInfo.country,
@@ -320,11 +355,11 @@ export function parseSingleConfig(raw: string, source: ConfigItem['source'] = 'm
 
       return {
         id: `tuic_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
-        name: remark || `ninipro-tuic-${countryInfo.code}`,
+        name: sanitizeText(remark) || `ninipro-tuic-${countryInfo.code}`,
         raw: line,
         protocol: 'tuic',
-        server,
-        port: isNaN(port) ? 8443 : port,
+        server: sanitizeHost(server),
+        port: sanitizePort(port),
         ping: null,
         status: 'untested',
         country: countryInfo.country,
@@ -370,8 +405,14 @@ export function parseSingleConfig(raw: string, source: ConfigItem['source'] = 'm
 }
 
 // Bulk text / multi-line parser
+const MAX_BULK_INPUT_CHARS = 2_000_000; // hard cap: ~2MB of pasted text
+const MAX_PARSED_CONFIGS = 1000; // hard cap on stored configs per bulk parse
+
 export function parseBulkConfigs(text: string, source: ConfigItem['source'] = 'manual', sourceName?: string): ConfigItem[] {
   if (!text || !text.trim()) return [];
+  if (text.length > MAX_BULK_INPUT_CHARS) {
+    text = text.slice(0, MAX_BULK_INPUT_CHARS);
+  }
 
   let contentToParse = text;
 
@@ -406,11 +447,12 @@ export function parseBulkConfigs(text: string, source: ConfigItem['source'] = 'm
     }
   }
 
-  // Deduplicate by raw content
+  // Deduplicate by raw content, cap total results
   const seen = new Set<string>();
-  return results.filter(item => {
+  const deduped = results.filter(item => {
     if (seen.has(item.raw)) return false;
     seen.add(item.raw);
     return true;
   });
+  return deduped.slice(0, MAX_PARSED_CONFIGS);
 }

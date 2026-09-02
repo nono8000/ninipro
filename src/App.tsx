@@ -220,6 +220,24 @@ export default function App() {
   const [isSyncingChannels, setIsSyncingChannels] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
+  // Guard: localStorage data may be corrupted/tampered; validate shape on boot.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_CONFIGS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+          localStorage.removeItem(STORAGE_KEY_CONFIGS);
+          setConfigs(getPreloadedConfigs());
+        }
+      }
+    } catch {
+      try { localStorage.removeItem(STORAGE_KEY_CONFIGS); } catch { /* noop */ }
+      setConfigs(getPreloadedConfigs());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const showNotification = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(null), 3000);
@@ -326,12 +344,17 @@ export default function App() {
   };
 
   // Add Configs
+  const MAX_TOTAL_CONFIGS = 2000;
   const handleAddConfigs = (newConfigs: ConfigItem[]) => {
-    // Prepend and deduplicate
+    // Prepend, deduplicate, and enforce a storage cap
     const seen = new Set(configs.map((c) => c.raw));
-    const toAdd = newConfigs.filter((c) => !seen.has(c.raw));
+    const toAdd = newConfigs.filter((c) => !seen.has(c.raw)).slice(0, MAX_TOTAL_CONFIGS - configs.length);
+    if (toAdd.length < newConfigs.filter((c) => !seen.has(c.raw)).length) {
+      showNotification(`سقف ذخیره‌سازی ${MAX_TOTAL_CONFIGS} کانفیگ است؛ فقط ${toAdd.length} کانفیگ اضافه شد.`);
+    } else {
+      showNotification(`${toAdd.length} کانفیگ با موفقیت به لیست اضافه شد.`);
+    }
     setConfigs((prev) => [...toAdd, ...prev]);
-    showNotification(`${toAdd.length} کانفیگ با موفقیت به لیست اضافه شد.`);
   };
 
   // Delete Config
