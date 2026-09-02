@@ -25,7 +25,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({
   const [copiedContact, setCopiedContact] = useState(false);
   const theme = THEMES[currentTheme];
 
-  const SUPPORT_CONTACT = '@ninipro_support';
+  const SUPPORT_CONTACT = '@SasaX60';
 
   const handleCopyContact = () => {
     navigator.clipboard.writeText(SUPPORT_CONTACT);
