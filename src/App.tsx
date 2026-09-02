@@ -374,27 +374,66 @@ export default function App() {
   const handleSyncAllChannels = async () => {
     setIsSyncingChannels(true);
     let totalHarvested = 0;
+    let failedSources = 0;
 
     for (const channel of channels.filter((c) => c.enabled)) {
+      setChannels((prev) =>
+        prev.map((c) => (c.id === channel.id ? { ...c, status: 'syncing' as const } : c))
+      );
       const res = await fetchChannelConfigs(channel);
       if (res.success && res.configs.length > 0) {
         totalHarvested += res.configs.length;
         handleAddConfigs(res.configs);
+        setChannels((prev) =>
+          prev.map((c) =>
+            c.id === channel.id
+              ? { ...c, status: 'active' as const, count: res.configs.length, lastFetched: Date.now() }
+              : c
+          )
+        );
+      } else {
+        failedSources++;
+        setChannels((prev) =>
+          prev.map((c) => (c.id === channel.id ? { ...c, status: 'error' as const } : c))
+        );
       }
     }
 
     setIsSyncingChannels(false);
-    showNotification(`دریافت خودکار انجام شد! +${totalHarvested} سرور تازه اضافه شد.`);
-    confetti({ particleCount: 60, spread: 70, origin: { y: 0.5 } });
+    if (totalHarvested > 0) {
+      showNotification(
+        failedSources > 0
+          ? `+${totalHarvested} سرور تازه اضافه شد (${failedSources} منبع پاسخ نداد).`
+          : `دریافت خودکار انجام شد! +${totalHarvested} سرور تازه اضافه شد.`
+      );
+      confetti({ particleCount: 60, spread: 70, origin: { y: 0.5 } });
+    } else {
+      showNotification('هیچ منبعی در دسترس نبود. اتصال اینترنت یا فیلترشکن را بررسی کنید.');
+    }
   };
 
   const handleSyncSingleChannel = async (channel: ChannelSource) => {
     setIsSyncingChannels(true);
+    setChannels((prev) =>
+      prev.map((c) => (c.id === channel.id ? { ...c, status: 'syncing' as const } : c))
+    );
     const res = await fetchChannelConfigs(channel);
     setIsSyncingChannels(false);
     if (res.success && res.configs.length > 0) {
       handleAddConfigs(res.configs);
+      setChannels((prev) =>
+        prev.map((c) =>
+          c.id === channel.id
+            ? { ...c, status: 'active' as const, count: res.configs.length, lastFetched: Date.now() }
+            : c
+        )
+      );
       showNotification(`+${res.configs.length} سرور از «${channel.name}» دریافت شد.`);
+    } else {
+      setChannels((prev) =>
+        prev.map((c) => (c.id === channel.id ? { ...c, status: 'error' as const } : c))
+      );
+      showNotification(`خطا در دریافت از «${channel.name}»: ${res.error || 'منبع در دسترس نیست.'}`);
     }
   };
 
@@ -441,9 +480,31 @@ export default function App() {
   };
 
   const handleAddCustomTgProxy = (proxy: TelegramProxyItem) => {
-    setTelegramProxies((prev) => [proxy, ...prev]);
+    setTelegramProxies((prev) => {
+      const key = `${proxy.server}:${proxy.port}:${proxy.type}`;
+      if (prev.some((p) => `${p.server}:${p.port}:${p.type}` === key)) return prev;
+      return [proxy, ...prev];
+    });
     showNotification('پروکسی اختصاصی تلگرام اضافه شد.');
     confetti({ particleCount: 30, spread: 50 });
+  };
+
+  // Bulk-add proxies fetched live (dedupe by server:port:type, cap 400)
+  const handleAddBulkTgProxies = (newProxies: TelegramProxyItem[]) => {
+    setTelegramProxies((prev) => {
+      const seen = new Set(prev.map((p) => `${p.server}:${p.port}:${p.type}`));
+      const toAdd: TelegramProxyItem[] = [];
+      for (const p of newProxies) {
+        const key = `${p.server}:${p.port}:${p.type}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          toAdd.push(p);
+        }
+      }
+      showNotification(`${toAdd.length} پروکسی زنده دریافت و اضافه شد.`);
+      if (toAdd.length > 20) confetti({ particleCount: 45, spread: 60, origin: { y: 0.6 } });
+      return [...toAdd, ...prev].slice(0, 400);
+    });
   };
 
   // Filtered & Sorted Configs List
@@ -848,6 +909,7 @@ export default function App() {
             onTestProxyPing={handleTestTgProxyPing}
             onTestAllProxies={handleTestAllTgProxies}
             onAddCustomProxy={handleAddCustomTgProxy}
+            onAddBulkProxies={handleAddBulkTgProxies}
             onShowQr={(proxy) => setQrItem(proxy)}
             isTestingPing={isTestingPing}
           />

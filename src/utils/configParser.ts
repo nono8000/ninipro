@@ -397,6 +397,51 @@ export function parseSingleConfig(raw: string, source: ConfigItem['source'] = 'm
       };
     }
 
+    // 8. SOCKS proxy (socks:// / socks5:// URIs found in some feeds)
+    if (line.startsWith('socks://') || line.startsWith('socks5://')) {
+      const urlPart = line.substring(line.indexOf('://') + 3);
+      const hashIdx = urlPart.indexOf('#');
+      const remark = hashIdx !== -1 ? decodeURIComponent(urlPart.substring(hashIdx + 1)) : 'SOCKS Proxy';
+      const mainPart = hashIdx !== -1 ? urlPart.substring(0, hashIdx) : urlPart;
+
+      let server = '127.0.0.1';
+      let port = 1080;
+      if (mainPart.includes('@')) {
+        const [, hostPort] = mainPart.split('@');
+        const [h, p] = hostPort.split(':');
+        server = h || server;
+        port = parseInt(p, 10) || 1080;
+      } else {
+        const decoded = safeBase64Decode(mainPart);
+        if (decoded.includes('@')) {
+          const [, hostPort] = decoded.split('@');
+          const [h, p] = hostPort.split(':');
+          server = h || server;
+          port = parseInt(p, 10) || 1080;
+        }
+      }
+
+      const countryInfo = detectCountry(remark, server);
+      return {
+        id: `socks_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
+        name: sanitizeText(remark) || `ninipro-socks-${countryInfo.code}`,
+        raw: line,
+        protocol: 'other',
+        server: sanitizeHost(server),
+        port: sanitizePort(port),
+        ping: null,
+        status: 'untested',
+        country: countryInfo.country,
+        countryCode: countryInfo.code,
+        flag: countryInfo.flag,
+        security: 'SOCKS',
+        network: 'tcp',
+        addedAt: Date.now(),
+        source,
+        sourceName: sourceName || 'ورودی کاربر',
+      };
+    }
+
     return null;
   } catch (err) {
     console.error('Error parsing config line:', err);
@@ -425,24 +470,43 @@ export function parseBulkConfigs(text: string, source: ConfigItem['source'] = 'm
   }
 
   const results: ConfigItem[] = [];
-  // Match protocols using regex or split by line
+  // Scan for embedded protocol links anywhere in messy telegram channel text.
+  // hy2:// must be matched BEFORE hysteria2:// does not exist as prefix issue:
+  // hysteria2 lines contain "hysteria2://" — "hy2://" is a distinct scheme.
+  const protocols = [
+    'vless://',
+    'vmess://',
+    'trojan://',
+    'ss://',
+    'hysteria2://',
+    'hy2://',
+    'tuic://',
+    'socks5://',
+    'socks://',
+    'wireguard://',
+    'warp://',
+  ];
   const lines = contentToParse.split(/[\r\n]+/);
 
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+    // Skip comment/meta lines of subscription headers
+    if (trimmed.startsWith('#') || trimmed.startsWith('//')) continue;
 
-    // Scan for embedded protocol links in messy telegram channel text
-    const protocols = ['vless://', 'vmess://', 'trojan://', 'ss://', 'hysteria2://', 'hy2://', 'tuic://', 'wireguard://', 'warp://'];
+    // Find every protocol occurrence in the line (some lines pack multiple)
+    let earliestIdx = -1;
     for (const proto of protocols) {
       const idx = trimmed.indexOf(proto);
-      if (idx !== -1) {
-        // Extract substring from protocol start to whitespace or end
-        const segment = trimmed.substring(idx).split(/\s+/)[0];
-        const parsed = parseSingleConfig(segment, source, sourceName);
-        if (parsed) {
-          results.push(parsed);
-        }
+      if (idx !== -1 && (earliestIdx === -1 || idx < earliestIdx)) {
+        earliestIdx = idx;
+      }
+    }
+    if (earliestIdx !== -1) {
+      const segment = trimmed.substring(earliestIdx).split(/\s+/)[0];
+      const parsed = parseSingleConfig(segment, source, sourceName);
+      if (parsed) {
+        results.push(parsed);
       }
     }
   }

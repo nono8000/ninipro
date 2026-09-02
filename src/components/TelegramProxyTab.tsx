@@ -1,34 +1,30 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { TelegramProxyItem, TelegramProxyProtocol, ThemeMode } from '../types';
 import { THEMES } from '../utils/theme';
 import {
   getTelegramProxyLinks,
   parseTgProxyUrl,
-  convertV2RayToTelegramProxy,
   generateFakeTlsSecret,
+  fetchAllTgProxies,
+  TG_CHANNELS,
 } from '../utils/telegramProxies';
-
 import {
   Send,
   Zap,
-  ExternalLink,
   Copy,
   QrCode,
   Check,
   Plus,
   RefreshCw,
   Sparkles,
-  ShieldCheck,
   Globe,
   Sliders,
-  Radio,
   ArrowRightLeft,
-  Trash2,
-  Share2,
-  Terminal,
-  Layers,
+  Radio,
   Search,
-  Filter,
+  ExternalLink,
+  AlertCircle,
+  Download,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -38,6 +34,7 @@ interface TelegramProxyTabProps {
   onTestProxyPing: (proxy: TelegramProxyItem) => void;
   onTestAllProxies: () => void;
   onAddCustomProxy: (proxy: TelegramProxyItem) => void;
+  onAddBulkProxies: (proxies: TelegramProxyItem[]) => void;
   onShowQr: (proxy: TelegramProxyItem) => void;
   isTestingPing: boolean;
 }
@@ -48,6 +45,7 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
   onTestProxyPing,
   onTestAllProxies,
   onAddCustomProxy,
+  onAddBulkProxies,
   onShowQr,
   isTestingPing,
 }) => {
@@ -55,6 +53,11 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showMaker, setShowMaker] = useState(false);
   const [showConverter, setShowConverter] = useState(false);
+
+  // Live sync state
+  const [isSyncingTg, setIsSyncingTg] = useState(false);
+  const [tgSyncError, setTgSyncError] = useState<string | null>(null);
+  const [hasSynced, setHasSynced] = useState(false);
 
   // Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -68,13 +71,36 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
   );
   const [makerType, setMakerType] = useState<TelegramProxyProtocol>('mtproto');
   const [makerTitle, setMakerTitle] = useState('');
-  const [makerUser, setMakerUser] = useState('ninipro');
+  const [makerUser, setMakerUser] = useState('');
   const [makerPass, setMakerPass] = useState('');
   const [makerV2rayRaw, setMakerV2rayRaw] = useState('');
 
   // Converter state
   const [converterInput, setConverterInput] = useState('');
   const [converterError, setConverterError] = useState<string | null>(null);
+
+  // Auto-sync on first mount
+  useEffect(() => {
+    if (!hasSynced && proxies.length === 0) {
+      handleSyncLiveProxies();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSyncLiveProxies = async () => {
+    setIsSyncingTg(true);
+    setTgSyncError(null);
+    const { proxies: fresh, errors } = await fetchAllTgProxies();
+    setIsSyncingTg(false);
+    setHasSynced(true);
+
+    if (fresh.length > 0) {
+      onAddBulkProxies(fresh);
+    }
+    if (errors.length > 0) {
+      setTgSyncError(`${errors.length} منبع پاسخ نداد (${errors.join('، ')}).`);
+    }
+  };
 
   const handleCopyLink = (proxy: TelegramProxyItem) => {
     const { appLink, copyableText } = getTelegramProxyLinks(proxy);
@@ -90,6 +116,10 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
     } catch {
       window.open(webLink, '_blank');
     }
+  };
+
+  const handleOpenChannel = (url: string) => {
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   const handleGenerateCustomSecret = () => {
@@ -211,30 +241,39 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg sm:text-xl font-black text-white">
-                  پروکسی تلگرام از تمامی پروتکل‌ها (Multi-Protocol TG Proxy)
+                  پروکسی تلگرام زنده (Multi-Protocol TG Proxy)
                 </h2>
-                <span className="px-2 py-0.5 rounded-full bg-sky-500/20 border border-sky-500/40 text-sky-300 text-xs font-bold">
-                  اتصال فوری با ۱ کلیک
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  دریافت خودکار
                 </span>
               </div>
               <p className="text-xs text-zinc-400 mt-1 max-w-2xl leading-relaxed">
-                پشتیبانی جامع از پروتکل‌های <strong className="text-white">MTProto Fake TLS</strong>،{' '}
-                <strong className="text-white">Socks5</strong>، <strong className="text-white">HTTP/HTTPS</strong>،{' '}
-                <strong className="text-white">VLESS Reality</strong>، <strong className="text-white">Trojan</strong>،{' '}
-                <strong className="text-white">Hysteria2</strong> و <strong className="text-white">Shadowsocks</strong> با امکان اتصال مستقیم به تلگرام بدون نیاز به VPN کلی.
+                پروکسی‌های <strong className="text-white">MTProto</strong>، <strong className="text-white">SOCKS5</strong> و{' '}
+                <strong className="text-white">HTTPS</strong> به‌صورت زنده از مخازن معتبر دریافت و با یک کلیک به تلگرام وصل می‌شوند.
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
             <button
+              id="sync-live-tg-btn"
+              onClick={handleSyncLiveProxies}
+              disabled={isSyncingTg}
+              className={`px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-md ${theme.accentBg}`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingTg ? 'animate-spin' : ''}`} />
+              <span>{isSyncingTg ? 'در حال دریافت زنده...' : 'دریافت پروکسی زنده'}</span>
+            </button>
+
+            <button
               id="ping-all-tg-proxies-btn"
               onClick={onTestAllProxies}
-              disabled={isTestingPing}
-              className="px-3.5 py-2.5 rounded-2xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95"
+              disabled={isTestingPing || proxies.length === 0}
+              className="px-3.5 py-2.5 rounded-2xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
             >
               <Zap className={`w-3.5 h-3.5 ${isTestingPing ? 'text-yellow-400 animate-spin' : 'text-emerald-400'}`} />
-              <span>{isTestingPing ? 'در حال تست پینگ...' : 'تست پینگ همه'}</span>
+              <span>{isTestingPing ? 'در حال تست...' : 'تست پینگ همه'}</span>
             </button>
 
             <button
@@ -246,7 +285,7 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
               className="px-3.5 py-2.5 rounded-2xl bg-purple-950/60 hover:bg-purple-900/80 border border-purple-800/60 text-purple-300 text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-md"
             >
               <ArrowRightLeft className="w-3.5 h-3.5 text-purple-400" />
-              <span>تبدیل هر کانفیگ به پروکسی TG</span>
+              <span>تبدیل کانفیگ به پروکسی</span>
             </button>
 
             <button
@@ -255,36 +294,76 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
                 setShowMaker(!showMaker);
                 if (showConverter) setShowConverter(false);
               }}
-              className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-md ${theme.accentBg}`}
+              className="px-3.5 py-2.5 rounded-2xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95"
             >
               <Plus className="w-4 h-4" />
-              <span>{showMaker ? 'بستن فرم' : 'ساخت پروکسی جدید'}</span>
+              <span>ساخت دستی</span>
             </button>
           </div>
         </div>
 
+        {/* Live sync error banner */}
+        {tgSyncError && (
+          <div className="mt-3 flex items-center gap-2 p-2.5 rounded-xl bg-amber-950/40 border border-amber-800/40 text-amber-300 text-[11px]">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{tgSyncError} دوباره تلاش کنید یا اتصال اینترنت/فیلترشکن را بررسی کنید.</span>
+          </div>
+        )}
+
         {/* Mini stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4 pt-4 border-t border-white/10">
           <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
-            <span className="text-[11px] text-zinc-400">تعداد کل پروکسی‌ها:</span>
+            <span className="text-[11px] text-zinc-400">پروکسی‌های زنده:</span>
             <span className="font-mono font-bold text-white text-xs">{proxies.length} عدد</span>
           </div>
           <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
-            <span className="text-[11px] text-zinc-400">پروکسی‌های پرسرعت:</span>
+            <span className="text-[11px] text-zinc-400">تست‌شده سالم:</span>
             <span className="font-mono font-bold text-emerald-400 text-xs">{healthyCount} سالم</span>
           </div>
           <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
-            <span className="text-[11px] text-zinc-400">پروتکل‌های تحت پوشش:</span>
-            <span className="font-mono font-bold text-cyan-400 text-xs">۹ پروتکل</span>
+            <span className="text-[11px] text-zinc-400">پروتکل‌ها:</span>
+            <span className="font-mono font-bold text-cyan-400 text-xs">MTProto • Socks • HTTPS</span>
           </div>
           <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between">
-            <span className="text-[11px] text-zinc-400">پشتیبانی TLS 1.3:</span>
-            <span className="font-mono font-bold text-yellow-400 text-xs">فعال ⚡</span>
+            <span className="text-[11px] text-zinc-400">وضعیت:</span>
+            <span className="font-mono font-bold text-yellow-400 text-xs">{isSyncingTg ? 'در حال دریافت' : 'آماده'}</span>
           </div>
         </div>
       </div>
 
-      {/* Converter Panel (تبدیل مستقیم هر لینک کانفیگ به پروکسی تلگرام) */}
+      {/* Official Channel Cards (کلیک‌خور) */}
+      <div>
+        <h3 className="text-sm font-bold text-zinc-200 mb-2.5 flex items-center gap-2">
+          <Radio className="w-4 h-4 text-sky-400" />
+          <span>کانال‌های رسمی پروکسی — با یک کلیک باز می‌شوند:</span>
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {TG_CHANNELS.map((ch) => (
+            <button
+              key={ch.id}
+              id={`tg-channel-${ch.id}`}
+              onClick={() => handleOpenChannel(ch.url)}
+              className={`group relative p-4 rounded-2xl bg-gradient-to-tr ${ch.gradient} bg-opacity-10 hover:scale-[1.02] active:scale-95 transition-all text-right shadow-lg overflow-hidden`}
+            >
+              <div className="absolute inset-0 bg-black/40 group-hover:bg-black/30 transition-colors" />
+              <div className="relative z-10 flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-black text-white">{ch.name}</h4>
+                  <p className="text-[11px] text-zinc-300 mt-0.5">{ch.description}</p>
+                  <span className="inline-block mt-1.5 text-[11px] font-mono font-bold text-sky-300" dir="ltr">
+                    {ch.handle}
+                  </span>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center shrink-0 group-hover:bg-white/20 transition-all">
+                  <ExternalLink className="w-4 h-4 text-white" />
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Converter Panel */}
       {showConverter && (
         <form
           onSubmit={handleConvertV2RaySubmit}
@@ -301,7 +380,7 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
           </div>
 
           <p className="text-xs text-zinc-400 leading-relaxed">
-            لینک کانفیگ مورد نظر خود (vless://, vmess://, trojan://, hysteria2://, ss:// یا tg://) را در کادر زیر جایگذاری (Paste) کنید تا به صورت فوری به پروکسی اختصاصی و قابل اتصال تلگرام تبدیل شود:
+            لینک کانفیگ مورد نظر خود (vless://, vmess://, trojan://, hysteria2://, ss:// یا tg://) را جایگذاری کنید تا به پروکسی قابل اتصال تلگرام تبدیل شود:
           </p>
 
           <div>
@@ -310,7 +389,7 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
               dir="ltr"
               value={converterInput}
               onChange={(e) => setConverterInput(e.target.value)}
-              placeholder="vless://9a1e0b5c-...@51.159.21.84:443?security=reality...\nیا tg://proxy?server=...\nیا hysteria2://token@server:443"
+              placeholder={`vless://uuid@server:443?security=reality...\nیا tg://proxy?server=...\nیا hysteria2://token@server:443`}
               className="w-full p-3 rounded-2xl bg-black/70 border border-white/20 text-xs font-mono text-white placeholder:text-zinc-600 focus:outline-none focus:border-purple-400 resize-none"
               autoFocus
             />
@@ -342,7 +421,7 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
         </form>
       )}
 
-      {/* Maker Custom Form (ساخت پروکسی با تمام پروتکل‌ها) */}
+      {/* Maker Custom Form */}
       {showMaker && (
         <form
           onSubmit={handleSaveCustomProxy}
@@ -351,7 +430,7 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Sliders className="w-4 h-4 text-cyan-400" />
-              <span>سازنده پروکسی اختصاصی با انتخاب هر پروتکل دلخواه:</span>
+              <span>سازنده پروکسی اختصاصی:</span>
             </h3>
             {makerType === 'mtproto' && (
               <button
@@ -441,24 +520,24 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
           {(makerType === 'socks5' || makerType === 'http') && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">نام کاربری (Username - اختیاری):</label>
+                <label className="block text-[11px] text-zinc-400 mb-1">نام کاربری (اختیاری):</label>
                 <input
                   type="text"
                   dir="ltr"
                   value={makerUser}
                   onChange={(e) => setMakerUser(e.target.value)}
-                  placeholder="ninipro"
+                  placeholder="user"
                   className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-white font-mono"
                 />
               </div>
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">رمز عبور (Password - اختیاری):</label>
+                <label className="block text-[11px] text-zinc-400 mb-1">رمز عبور (اختیاری):</label>
                 <input
                   type="text"
                   dir="ltr"
                   value={makerPass}
                   onChange={(e) => setMakerPass(e.target.value)}
-                  placeholder="secret password"
+                  placeholder="password"
                   className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-white font-mono"
                 />
               </div>
@@ -504,23 +583,21 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
         id="tg-filter-bar"
         className={`p-4 rounded-3xl border ${theme.cardBorder} ${theme.cardBg} shadow-lg space-y-3`}
       >
-        {/* Search input */}
         <div className="relative w-full">
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="جستجو در پروکسی‌ها، کشورها، پروتکل، سرور IP یا پورت..."
+            placeholder="جستجو در پروکسی‌ها، سرور یا پورت..."
             className="w-full pl-4 pr-10 py-2.5 rounded-2xl bg-black/50 border border-white/15 text-xs text-white placeholder:text-zinc-500 focus:outline-none focus:border-white/40"
           />
           <Search className="w-4 h-4 text-zinc-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
         </div>
 
-        {/* Protocol Pills */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           <span className="text-[11px] font-bold text-zinc-400 shrink-0 ml-1">فیلتر پروتکل:</span>
           {[
-            { id: 'all', label: 'همه پروتکل‌ها' },
+            { id: 'all', label: 'همه' },
             { id: 'mtproto', label: 'MTProto TLS' },
             { id: 'socks5', label: 'Socks5' },
             { id: 'http', label: 'HTTP / HTTPS' },
@@ -545,95 +622,101 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
         </div>
       </div>
 
+      {/* Loading skeleton */}
+      {isSyncingTg && proxies.length === 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="p-5 rounded-3xl border border-white/5 bg-black/20 animate-pulse space-y-3">
+              <div className="h-4 bg-white/10 rounded w-3/4" />
+              <div className="h-3 bg-white/5 rounded w-1/2" />
+              <div className="h-9 bg-white/10 rounded-xl" />
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Proxies List Grid */}
-      {filteredProxies.length > 0 ? (
+      {!isSyncingTg && (filteredProxies.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {filteredProxies.map((proxy) => {
             const isCopied = copiedId === proxy.id;
             const badge = getBadgeForProtocol(proxy.type);
             const isHealthy = proxy.status === 'healthy' && proxy.ping !== null && proxy.ping > 0;
+            const isDead = proxy.status === 'dead';
             const isTesting = proxy.status === 'testing';
 
             return (
               <div
                 key={proxy.id}
-                className={`rounded-3xl border ${theme.cardBorder} ${theme.cardBg} p-4 sm:p-5 shadow-lg flex flex-col justify-between space-y-4 hover:border-white/30 transition-all group relative overflow-hidden`}
+                className={`rounded-3xl border ${theme.cardBorder} ${theme.cardBg} p-4 sm:p-5 shadow-lg flex flex-col justify-between space-y-4 hover:border-white/30 transition-all group relative overflow-hidden ${
+                  isDead ? 'opacity-50' : ''
+                }`}
               >
-                {/* Header */}
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-2xl select-none">{proxy.flag}</span>
-                    <div>
-                      <h4 className="text-sm font-black text-white group-hover:text-cyan-300 transition-colors line-clamp-1">
-                        {proxy.title}
-                      </h4>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[11px] text-zinc-400 font-mono">
-                          {proxy.server}:{proxy.port}
-                        </span>
-                        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md border ${badge.bg}`}>
-                          {badge.label}
-                        </span>
+                {/* Header — whole card is clickable to connect */}
+                <button
+                  type="button"
+                  onClick={() => handleConnectTelegram(proxy)}
+                  className="text-right w-full"
+                  title="اتصال یک‌کلیکی به تلگرام"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl select-none">{proxy.flag}</span>
+                      <div>
+                        <h4 className="text-sm font-black text-white group-hover:text-cyan-300 transition-colors line-clamp-1">
+                          {proxy.title}
+                        </h4>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[11px] text-zinc-400 font-mono" dir="ltr">
+                            {proxy.server}:{proxy.port}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Ping Badge */}
-                  <button
-                    type="button"
-                    onClick={() => onTestProxyPing(proxy)}
-                    className={`px-2 py-1 rounded-xl text-[11px] font-mono font-bold flex items-center gap-1 transition-all ${
-                      isTesting
-                        ? 'bg-yellow-500/20 text-yellow-300 animate-pulse'
-                        : isHealthy
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : 'bg-white/10 text-zinc-400'
-                    }`}
-                    title="تست پینگ این پروکسی"
-                  >
-                    <Zap className={`w-3 h-3 ${isTesting ? 'animate-spin text-yellow-400' : 'text-emerald-400'}`} />
-                    <span>{proxy.ping ? `${proxy.ping}ms` : 'تست'}</span>
-                  </button>
-                </div>
-
-                {/* Protocol Info & Features */}
-                <div className="p-2.5 rounded-2xl bg-black/40 border border-white/5 space-y-1.5 text-[11px]">
-                  <div className="flex items-center justify-between text-zinc-400">
-                    <span>جزئیات رمزگذاری:</span>
-                    <span className="text-zinc-200 font-semibold truncate max-w-[170px]" dir="ltr">
-                      {proxy.protocolDetails || proxy.type.toUpperCase()}
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onTestProxyPing(proxy);
+                      }}
+                      className={`px-2 py-1 rounded-xl text-[11px] font-mono font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                        isTesting
+                          ? 'bg-yellow-500/20 text-yellow-300 animate-pulse'
+                          : isHealthy
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : isDead
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                          : 'bg-white/10 text-zinc-400'
+                      }`}
+                      title="تست پینگ این پروکسی"
+                    >
+                      <Zap className={`w-3 h-3 ${isTesting ? 'animate-spin text-yellow-400' : isHealthy ? 'text-emerald-400' : ''}`} />
+                      <span>{proxy.ping === -1 ? 'قطع' : proxy.ping ? `${proxy.ping}ms` : 'تست'}</span>
                     </span>
                   </div>
 
-                  {proxy.sponsorChannel && (
-                    <div className="flex items-center justify-between text-zinc-400">
-                      <span>کانال اسپانسر:</span>
-                      <span className="text-sky-400 font-mono font-bold">{proxy.sponsorChannel}</span>
-                    </div>
-                  )}
-
-                  {proxy.v2rayRawConfig && (
-                    <div className="flex items-center justify-between text-zinc-400 pt-0.5">
-                      <span>پشتیبانی تونل V2Ray:</span>
-                      <span className="text-purple-300 font-mono font-bold">بله (Inbound 10808)</span>
-                    </div>
-                  )}
-                </div>
+                  <div className="mt-2.5 flex items-center gap-1.5">
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${badge.bg}`}>
+                      {badge.label}
+                    </span>
+                    {proxy.isCustom && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-white/5 text-zinc-400 border border-white/10">
+                        دستی
+                      </span>
+                    )}
+                  </div>
+                </button>
 
                 {/* Action Buttons */}
                 <div className="flex items-center gap-2 pt-1 border-t border-white/5">
-                  {/* Connect to Telegram button */}
+                  {/* One-click connect */}
                   <button
                     type="button"
                     onClick={() => handleConnectTelegram(proxy)}
-                    className={`flex-1 py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-95 ${
-                      proxy.type === 'vless' || proxy.type === 'trojan' || proxy.type === 'hysteria2'
-                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-500 hover:to-indigo-500'
-                        : theme.accentBg
-                    }`}
+                    className={`flex-1 py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-95 ${theme.accentBg}`}
                   >
                     <Send className="w-3.5 h-3.5" />
-                    <span>اتصال به تلگرام</span>
+                    <span>اتصال یک‌کلیکی</span>
                   </button>
 
                   {/* Copy Link */}
@@ -641,7 +724,7 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
                     type="button"
                     onClick={() => handleCopyLink(proxy)}
                     className="p-2.5 rounded-2xl bg-white/5 hover:bg-white/15 text-zinc-300 transition-all"
-                    title="کپی لینک مستقیم یا کانفیگ"
+                    title="کپی لینک اتصال"
                   >
                     {isCopied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                   </button>
@@ -661,25 +744,38 @@ export const TelegramProxyTab: React.FC<TelegramProxyTabProps> = ({
           })}
         </div>
       ) : (
-        <div
-          className={`p-10 rounded-3xl border ${theme.cardBorder} ${theme.cardBg} text-center space-y-3`}
-        >
+        <div className={`p-10 rounded-3xl border ${theme.cardBorder} ${theme.cardBg} text-center space-y-3`}>
           <Globe className="w-12 h-12 mx-auto text-zinc-600 animate-pulse" />
-          <h3 className="text-base font-bold text-white">پروکسی با مشخصات انتخابی یافت نشد</h3>
+          <h3 className="text-base font-bold text-white">
+            {proxies.length === 0 ? 'هنوز پروکسی دریافت نشده' : 'پروکسی با مشخصات انتخابی یافت نشد'}
+          </h3>
           <p className="text-xs text-zinc-400 max-w-sm mx-auto">
-            می‌توانید فیلترها را ریست کنید یا با استفاده از دکمه «تبدیل هر کانفیگ به پروکسی TG» کانفیگ‌های جدید اضافه نمایید.
+            {proxies.length === 0
+              ? 'برای دریافت پروکسی‌های زنده MTProto و SOCKS5 روی دکمه زیر بزنید.'
+              : 'فیلترها را ریست کنید یا عبارت دیگری جستجو کنید.'}
           </p>
-          <button
-            onClick={() => {
-              setSelectedProtocol('all');
-              setSearchQuery('');
-            }}
-            className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-white"
-          >
-            نمایش همه پروتکل‌ها
-          </button>
+          {proxies.length === 0 ? (
+            <button
+              onClick={handleSyncLiveProxies}
+              disabled={isSyncingTg}
+              className={`px-5 py-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 ${theme.accentBg}`}
+            >
+              <Download className="w-4 h-4" />
+              <span>دریافت پروکسی زنده</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                setSelectedProtocol('all');
+                setSearchQuery('');
+              }}
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-white"
+            >
+              نمایش همه پروتکل‌ها
+            </button>
+          )}
         </div>
-      )}
+      ))}
     </div>
   );
 };

@@ -1,57 +1,73 @@
 import { ConfigItem, TelegramProxyItem } from '../types';
 
-// Ping single config
-export async function testConfigPing(config: ConfigItem): Promise<{ ping: number; status: ConfigItem['status'] }> {
-  const startTime = performance.now();
+// ============================================================================
+// REAL TCP reachability probing.
+//
+// Browsers cannot send raw TCP SYN packets, so a "ping" to an arbitrary
+// host:port is approximated with fetch() + AbortController timing:
+//   - Fast failure/rejection  => host is UNREACHABLE (dead)
+//   - TLS/HTTP handshake response (even 4xx/5xx or cert error) => host LIVE
+//   - measured wall time => latency estimate (includes handshake overhead)
+//
+// This is a genuine network probe of the real server — dramatically more
+// truthful than random numbers. Note it measures handshake latency, not
+// protocol-level speed.
+// ============================================================================
+
+const PROBE_TIMEOUT_MS = 4000;
+
+interface ProbeResult { alive: boolean; latencyMs: number | null }
+
+async function probeHost(server: string, port: number): Promise<ProbeResult> {
+  const started = performance.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
 
   try {
-    // Determine realistic latency range based on location and protocol
-    let baseLatency = 95;
-    if (config.countryCode === 'DE' || config.countryCode === 'NL' || config.countryCode === 'FR') {
-      baseLatency = 75 + Math.floor(Math.random() * 45);
-    } else if (config.countryCode === 'FI' || config.countryCode === 'TR') {
-      baseLatency = 65 + Math.floor(Math.random() * 40);
-    } else if (config.countryCode === 'US' || config.countryCode === 'CA') {
-      baseLatency = 160 + Math.floor(Math.random() * 80);
-    } else if (config.countryCode === 'SG' || config.countryCode === 'AE') {
-      baseLatency = 120 + Math.floor(Math.random() * 50);
-    } else {
-      baseLatency = 110 + Math.floor(Math.random() * 60);
+    // https://host:port triggers a real TCP connect + (when TLS) handshake.
+    // Any response — even a TLS error thrown quickly — proves the port answered.
+    await fetch(`https://${server}:${port}/`, {
+      mode: 'no-cors',
+      signal: controller.signal,
+      // cache must not fake a fast result
+      cache: 'no-store',
+    });
+    // A completed (opaque) response means the TCP+TLS+HTTP stack answered.
+    const elapsed = Math.round(performance.now() - started);
+    return { alive: true, latencyMs: elapsed };
+  } catch (err) {
+    const elapsed = Math.round(performance.now() - started);
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      // Timed out: no answer within budget -> treat as dead/slow
+      return { alive: false, latencyMs: null };
     }
-
-    // Protocol efficiency factor (Hysteria2 / TUIC / VLESS Reality are faster)
-    if (config.protocol === 'hysteria2' || config.protocol === 'tuic') {
-      baseLatency = Math.max(35, Math.floor(baseLatency * 0.75));
-    } else if (config.protocol === 'vless') {
-      baseLatency = Math.max(45, Math.floor(baseLatency * 0.85));
+    // A fast rejection is ambiguous: it can mean "TCP RST" (dead) OR a TLS
+    // certificate failure from a LIVE non-HTTPS service. Heuristic: if the
+    // failure came back very quickly (<1200ms) it is usually an immediate
+    // connection error (unreachable). Slower failures usually spent time in a
+    // real handshake (live host with mismatched TLS).
+    if (elapsed >= 1200) {
+      return { alive: true, latencyMs: elapsed };
     }
-
-    // Small delay simulation to feel real and responsive
-    const simDelay = Math.min(baseLatency * 1.5, 380);
-    await new Promise((resolve) => setTimeout(resolve, simDelay));
-
-    // 5% chance of packet loss / dead node for realism if untested
-    const isDead = Math.random() < 0.04;
-    if (isDead) {
-      return { ping: -1, status: 'dead' };
-    }
-
-    const calculatedPing = baseLatency + Math.floor((performance.now() - startTime) % 20);
-    
-    let status: ConfigItem['status'] = 'healthy';
-    if (calculatedPing > 300) {
-      status = 'slow';
-    } else if (calculatedPing <= 0) {
-      status = 'dead';
-    }
-
-    return {
-      ping: calculatedPing,
-      status,
-    };
-  } catch {
-    return { ping: -1, status: 'dead' };
+    return { alive: false, latencyMs: null };
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+function classify(pingMs: number | null): ConfigItem['status'] {
+  if (pingMs === null) return 'dead';
+  if (pingMs > 3000) return 'slow';
+  return 'healthy';
+}
+
+// Ping single config (real probe)
+export async function testConfigPing(
+  config: ConfigItem
+): Promise<{ ping: number; status: ConfigItem['status'] }> {
+  const probe = await probeHost(config.server, config.port);
+  const status = classify(probe.latencyMs);
+  return { ping: probe.alive ? probe.latencyMs ?? -1 : -1, status: probe.alive ? status : 'dead' };
 }
 
 // Batch test all configs with concurrency control
@@ -60,7 +76,7 @@ export async function batchTestConfigs(
   onProgress?: (testedCount: number, total: number, updatedItem: ConfigItem) => void
 ): Promise<ConfigItem[]> {
   const updatedConfigs = [...configs];
-  const concurrency = 6;
+  const concurrency = 8;
   let index = 0;
   let completed = 0;
 
@@ -68,7 +84,7 @@ export async function batchTestConfigs(
     while (index < updatedConfigs.length) {
       const currentIndex = index++;
       const item = updatedConfigs[currentIndex];
-      
+
       const { ping, status } = await testConfigPing(item);
       const updated: ConfigItem = {
         ...item,
@@ -77,7 +93,7 @@ export async function batchTestConfigs(
       };
       updatedConfigs[currentIndex] = updated;
       completed++;
-      
+
       if (onProgress) {
         onProgress(completed, updatedConfigs.length, updated);
       }
@@ -90,23 +106,13 @@ export async function batchTestConfigs(
   return updatedConfigs;
 }
 
-// Ping Telegram multi-protocol proxy
-export async function testTelegramProxyPing(proxy: TelegramProxyItem): Promise<{ ping: number; status: TelegramProxyItem['status'] }> {
-  let base = 85;
-  if (proxy.countryCode === 'TR' || proxy.countryCode === 'FI') base = 62;
-  else if (proxy.countryCode === 'DE' || proxy.countryCode === 'NL' || proxy.countryCode === 'FR') base = 75;
-  else if (proxy.countryCode === 'US' || proxy.countryCode === 'CA') base = 145;
-  else if (proxy.countryCode === 'SG') base = 120;
-
-  // Protocol bonus
-  if (proxy.type === 'vless' || proxy.type === 'hysteria2' || proxy.type === 'trojan') {
-    base = Math.max(35, Math.floor(base * 0.8));
-  }
-
-  await new Promise((resolve) => setTimeout(resolve, 180 + Math.random() * 160));
-
-  const ping = base + Math.floor(Math.random() * 25);
-  const status: TelegramProxyItem['status'] = ping > 260 ? 'slow' : 'healthy';
-
-  return { ping, status };
+// Ping Telegram proxy (real probe; MTProto ports answer TCP, so same method)
+export async function testTelegramProxyPing(
+  proxy: TelegramProxyItem
+): Promise<{ ping: number; status: TelegramProxyItem['status'] }> {
+  const probe = await probeHost(proxy.server, proxy.port);
+  if (!probe.alive) return { ping: -1, status: 'dead' };
+  const status: TelegramProxyItem['status'] =
+    probe.latencyMs !== null && probe.latencyMs > 3000 ? 'slow' : 'healthy';
+  return { ping: probe.latencyMs ?? -1, status };
 }
